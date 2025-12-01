@@ -4,45 +4,20 @@
 module lab_7_top_level (
     input  logic        clk,
     input  logic        reset,
-
-    // SW0: HEX(0) / DEC(1) format for 7-seg (we only use bit 0).
     input  logic [1:0]  bin_bcd_select,
-
-    // SW2-SW3: select which ADC path the display shows:
-    //   00 = XADC, 01 = PWM, 10 = R2R, 11 = 0 (unused).
     input  logic [1:0]  adc_select,
-
-    // XADC analog input pins.
     input  logic        vauxp15,
     input  logic        vauxn15,
-
-    // Comparator output from the discrete PWM ADC circuit.
     input  logic        comp_pwm,
-
-    // R-2R comparator.
     input  logic        comp_r2r,
-
-    // 7-segment outputs.
     output logic        CA, CB, CC, CD, CE, CF, CG, DP,
     output logic        AN1, AN2, AN3, AN4,
-
-    // Debug LEDs.
     output logic [15:0] led,
-
-    // PWM output that feeds the RC filter + comparator.
     output logic        pwm_out,
-
-    // R-2R bus that drives the ladder.
     output logic [7:0]  r2r_out,
-
-    // What to show for the selected ADC:
-    //   00 = raw code, 01 = averaged code, 10 = voltage in mV.
     input  logic [1:0]  display_mode,
-
-    // SW6: 0 = Ramp ADC, 1 = SAR ADC (for both PWM and R2R)
     input  logic        sar_mode
 );
-    logic [3:0] decimal_pt;
 
     // ---------------- XADC path ----------------
     logic [15:0] xadc_raw;
@@ -103,59 +78,35 @@ module lab_7_top_level (
         .r2r_mv     (r2r_mv)
     );
 
+    // ---------- Select RAW / AVG / VOLT in a separate module ----------
+    logic [15:0] adc0_val;   // XADC view
+    logic [15:0] adc1_val;   // PWM view
+    logic [15:0] adc2_val;   // R2R view
+    logic [15:0] adc3_val;   // unused (still needed by mux4_16_bits)
+    logic [3:0]  decimal_pt;
 
-    // ---------- Select RAW / AVG / VOLT ----------
- logic [15:0] adc0_val;   // XADC view
-logic [15:0] adc1_val;   // PWM view
-logic [15:0] adc2_val;   // R2R view
-logic [15:0] adc3_val;   // unused
+    assign adc3_val = 16'd0;
 
-assign adc3_val = 16'd0;
+    adc_display_mux DISPLAY_SEL (
+        .display_mode (display_mode),
 
-always_comb begin
-    case (display_mode)
-        2'b00: begin // RAW codes
-            // XADC: full 16-bit raw (12 bits used)
-            adc0_val = xadc_raw;
+        .xadc_raw     (xadc_raw),
+        .xadc_scaled  (xadc_scaled),
+        .xadc_mv      (xadc_mv),
 
-            // PWM/R2R: ***ONLY 8 bits*** forced into low byte
-            adc1_val = {8'd0, pwm_raw16[7:0]};   // 0..255 max
-            adc2_val = {8'd0, r2r_raw16[7:0]};   // 0..255 max
-        end
+        .pwm_raw16    (pwm_raw16),
+        .pwm_scaled16 (pwm_scaled16),
+        .pwm_mv       (pwm_mv),
 
-        2'b01: begin // AVERAGED
-            adc0_val = xadc_scaled;
+        .r2r_raw16    (r2r_raw16),
+        .r2r_scaled16 (r2r_scaled16),
+        .r2r_mv       (r2r_mv),
 
-            // show only averaged 8-bit code (top byte of averager)
-            adc1_val = {8'd0, pwm_scaled16[15:8]};  // 0..255
-            adc2_val = {8'd0, r2r_scaled16[15:8]};  // 0..255
-        end
-
-        2'b10: begin // VOLTAGE (0-3300 mV)
-            adc0_val = xadc_mv;
-            adc1_val = pwm_mv;
-            adc2_val = r2r_mv;
-        end
-
-        default: begin
-            adc0_val = 16'd0;
-            adc1_val = 16'd0;
-            adc2_val = 16'd0;
-        end
-    endcase
-end
-    // Decimal point: only on in VOLTAGE mode (display_mode = 2'b10)
-    // Pattern decides *where* the dot appears.
-    //  - Try 4'b1000 first: DP after left-most digit → X.xxx
-    //  - If it's in the wrong spot, try 4'b0100 or 4'b0010.
-    always_comb begin
-        if (display_mode == 2'b10) begin
-            decimal_pt = 4'b1000;   // DP after the first digit
-        end else begin
-            decimal_pt = 4'b0000;   // DP off in RAW / AVERAGED modes
-        end
-    end
-
+        .adc0_val     (adc0_val),
+        .adc1_val     (adc1_val),
+        .adc2_val     (adc2_val),
+        .decimal_point(decimal_pt)
+    );
 
     // ---------- ADC select mux (SW2-SW3) ----------
     logic [15:0] display_value;
@@ -167,7 +118,7 @@ end
         .in3          (adc3_val),   // 11 = 0
         .select       (adc_select),
         .mux_out      (display_value),
-        .decimal_point()            // unused, left unconnected
+        .decimal_point()           // still unused for now
     );
 
     // ------------- Seven-segment driver -------------
